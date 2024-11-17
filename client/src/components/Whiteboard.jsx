@@ -1,25 +1,26 @@
-import React, { useEffect, useRef } from 'react';
-import { io } from 'socket.io-client';
+import React, { useEffect, useRef, useContext } from 'react';
+import { SocketContext } from '../Context';
 
 const Whiteboard = () => {
   const canvasRef = useRef(null);
-  const socketRef = useRef();
   const ctxRef = useRef();
   const drawing = useRef(false);
 
-  // Define drawLine before usage
+  // Get socket context values
+  const { emitDrawing, roomId } = useContext(SocketContext);
+  const { socket } = useContext(SocketContext);
+
+  // Define drawLine function
   const drawLine = (x, y, prevX, prevY) => {
-    if (!ctxRef.current) return;
+    if (!ctxRef.current) return false;
     ctxRef.current.beginPath();
     ctxRef.current.moveTo(prevX, prevY);
     ctxRef.current.lineTo(x, y);
     ctxRef.current.stroke();
+    return true;
   };
 
   useEffect(() => {
-    // Initialize WebSocket connection
-    socketRef.current = io('http://localhost:9000');
-
     // Setup canvas
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
@@ -37,12 +38,20 @@ const Whiteboard = () => {
     ctxRef.current = ctx;
 
     // Handle incoming drawing events
-    socketRef.current.on('draw', ({ x, y, prevX, prevY }) => {
-      drawLine(x, y, prevX, prevY); // No error now
-    });
+    const handleDrawEvent = (data) => drawLine(data.x, data.y, data.prevX, data.prevY);
 
-    return () => socketRef.current.disconnect();
-  }, []);
+    if (socket) {
+      // Listen for draw events
+      socket.on('draw', handleDrawEvent);
+
+      // Cleanup listener when component unmounts
+      return () => {
+        socket.off('draw', handleDrawEvent);
+        return true;
+      };
+    }
+    return undefined;
+  }, [socket]);
 
   const handleMouseDown = (e) => {
     const { offsetX, offsetY } = e.nativeEvent;
@@ -50,13 +59,16 @@ const Whiteboard = () => {
   };
 
   const handleMouseMove = (e) => {
-    if (!drawing.current) return;
+    if (!drawing.current || !roomId) return;
+
     const { offsetX, offsetY } = e.nativeEvent;
     const prevPos = drawing.current;
+
+    // Draw locally
     drawLine(offsetX, offsetY, prevPos.x, prevPos.y);
 
-    // Emit draw event
-    socketRef.current.emit('draw', {
+    // Emit drawing data to room
+    emitDrawing({
       x: offsetX,
       y: offsetY,
       prevX: prevPos.x,
@@ -70,14 +82,36 @@ const Whiteboard = () => {
     drawing.current = false;
   };
 
+  const handleMouseLeave = () => {
+    drawing.current = false;
+  };
+
   return (
-    <canvas
-      ref={canvasRef}
-      style={{ border: '1px solid black', backgroundColor: 'white' }}
-      onMouseDown={handleMouseDown}
-      onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUp}
-    />
+    <div className="whiteboard-container">
+      <canvas
+        ref={canvasRef}
+        style={{
+          border: '1px solid black',
+          backgroundColor: 'white',
+          cursor: roomId ? 'crosshair' : 'not-allowed',
+        }}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseLeave}
+      />
+      {!roomId && (
+        <div
+          style={{
+            textAlign: 'center',
+            marginTop: '10px',
+            color: 'red',
+          }}
+        >
+          Join a call to enable whiteboard collaboration
+        </div>
+      )}
+    </div>
   );
 };
 
